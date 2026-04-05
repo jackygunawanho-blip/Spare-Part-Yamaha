@@ -57,13 +57,12 @@ with tab2:
                 hp = st.text_input("No. HP")
 
             st.markdown("---")
-            # --- 关键逻辑：付款方式选择 ---
+            # --- 关键：这里的代码控制选项显示 ---
             pay = st.selectbox("Metode Pembayaran", ["Cash", "Kredit"])
             
             leasing = "N/A"
             tenor = "0"
             
-            # 只有选了 Kredit 才会显示
             if pay == "Kredit":
                 lc1, lc2 = st.columns(2)
                 with lc1:
@@ -80,10 +79,8 @@ with tab2:
                     st.warning("Mohon isi Nama!")
 
     else:
-        # 提醒逻辑
         if os.path.exists(CUSTOMER_FILE):
             df_clients = pd.read_csv(CUSTOMER_FILE)
-            
             def check_status(row):
                 if row['Payment'] == 'Cash': return "🟢 Lunas (Cash)"
                 try:
@@ -95,12 +92,6 @@ with tab2:
                     elif today + relativedelta(months=1) >= end_date: return "🟡 Segera (Bulan ini)"
                     else: return "🔵 On Going"
                 except: return "Data Error"
-
             if not df_clients.empty:
                 df_clients['Status'] = df_clients.apply(check_status, axis=1)
-                search_c = st.text_input("Cari Nama/Plat/Status:")
-                if search_c:
-                    res = df_clients[df_clients.astype(str).apply(lambda x: x.str.contains(search_c, case=False)).any(axis=1)]
-                    st.dataframe(res, use_container_width=True)
-                else:
-                    st.dataframe(df_clients, use_container_width=True)
+                st.dataframe(df_clients, use_container_width=True)
