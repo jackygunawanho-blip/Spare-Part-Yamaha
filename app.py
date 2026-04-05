@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 from datetime import datetime
+from dateutil.relativedelta import relativedelta
 
 # Konfigurasi Halaman
 st.set_page_config(page_title="Sistem Manajemen Motor", layout="wide")
@@ -10,42 +11,31 @@ st.set_page_config(page_title="Sistem Manajemen Motor", layout="wide")
 PARTS_FILE = "data.xlsx"
 CUSTOMER_FILE = "clients.csv"
 
-# Inisialisasi file customer jika belum ada
+# Inisialisasi file customer
 if not os.path.exists(CUSTOMER_FILE):
     columns = ["Tanggal", "Nama", "No.plat", "NoFaktur", "No mesin", "No Rangka", "warna", "Type", "Alamat", "No.hp", "Payment", "Leasing", "Tenor"]
     pd.DataFrame(columns=columns).to_csv(CUSTOMER_FILE, index=False, encoding='utf-8-sig')
 
 st.title("🏍️ Sistem Manajemen Sparepart & Penjualan")
 
-# Membuat Tab
-tab1, tab2 = st.tabs(["🔍 Cari Sparepart & Harga", "📝 Data Konsumen Baru"])
+tab1, tab2 = st.tabs(["🔍 Cari Sparepart & Harga", "📝 Data Konsumen & Notifikasi"])
 
 # --- BAGIAN 1: CARI SPAREPART ---
 with tab1:
     st.header("Pencarian Sparepart")
     if os.path.exists(PARTS_FILE):
-        try:
-            df_parts = pd.read_excel(PARTS_FILE)
-            search_part = st.text_input("Masukkan Nama atau Kode Sparepart:", placeholder="Cari kode, nama, atau harga...")
-            
-            if search_part:
-                mask = df_parts.astype(str).apply(lambda x: x.str.contains(search_part, case=False)).any(axis=1)
-                result = df_parts[mask]
-                st.success(f"Ditemukan {len(result)} hasil")
-                st.dataframe(result, use_container_width=True)
-            else:
-                st.info("💡 Silakan masukkan kata kunci untuk mencari.")
-                st.write("Pratinjau Data (10 baris pertama):", df_parts.head(10))
-        except Exception as e:
-            st.error(f"Gagal membaca file Excel: {e}")
-    else:
-        st.error(f"❌ File {PARTS_FILE} tidak ditemukan di server.")
+        df_parts = pd.read_excel(PARTS_FILE)
+        search_part = st.text_input("Masukkan Nama atau Kode Sparepart:")
+        if search_part:
+            mask = df_parts.astype(str).apply(lambda x: x.str.contains(search_part, case=False)).any(axis=1)
+            st.dataframe(df_parts[mask], use_container_width=True)
+        else:
+            st.write("Data Sparepart:", df_parts.head(10))
 
-# --- BAGIAN 2: DATA KONSUMEN ---
+# --- BAGIAN 2: DATA KONSUMEN & REMINDER ---
 with tab2:
-    st.header("Manajemen Data Konsumen")
-    
-    op = st.radio("Pilih Menu:", ["Input Data Baru", "Cari Data Lama"], horizontal=True)
+    st.header("Manajemen Konsumen & Notifikasi Pembayaran")
+    op = st.radio("Pilih Menu:", ["Input Data Baru", "Cari & Notifikasi Pembayaran"], horizontal=True)
     
     if op == "Input Data Baru":
         with st.form("client_form", clear_on_submit=True):
@@ -65,34 +55,50 @@ with tab2:
 
             st.markdown("---")
             pay = st.selectbox("Metode Pembayaran", ["Cash", "Kredit"])
-            
             leasing = "N/A"
-            tenor = "N/A"
+            tenor = "0"
             if pay == "Kredit":
                 lc1, lc2 = st.columns(2)
                 with lc1:
-                    leasing = st.selectbox("Leasing", ["ADR", "BAF", "MOI", "WOM"])
+                    leasing = st.selectbox("Leasing", ["ADR", "BAF", "MDL", "WOM"])
                 with lc2:
-                    tenor = st.text_input("Tenor (Bulan)", placeholder="Contoh: 11, 23, 35")
+                    tenor = st.text_input("Tenor (Bulan)", value="11")
 
             if st.form_submit_button("💾 Simpan Data"):
-                if nama:
-                    new_row = [tgl, nama, plat, faktur, mesin, rangka, warna, ctype, alamat, hp, pay, leasing, tenor]
-                    new_df = pd.DataFrame([new_row])
-                    new_df.to_csv(CUSTOMER_FILE, mode='a', header=False, index=False, encoding='utf-8-sig')
-                    st.success(f"✅ Data konsumen {nama} berhasil disimpan!")
-                else:
-                    st.warning("Mohon isi Nama Konsumen minimal!")
+                new_row = [tgl, nama, plat, faktur, mesin, rangka, warna, ctype, alamat, hp, pay, leasing, tenor]
+                pd.DataFrame([new_row]).to_csv(CUSTOMER_FILE, mode='a', header=False, index=False, encoding='utf-8-sig')
+                st.success(f"✅ Data {nama} berhasil disimpan!")
 
     else:
-        search_c = st.text_input("Cari berdasarkan Nama, No Plat, atau No Rangka:")
-        if os.path.exists(CUSTOMER_FILE):
-            df_clients = pd.read_csv(CUSTOMER_FILE)
-            if search_c:
-                res_c = df_clients[df_clients.astype(str).apply(lambda x: x.str.contains(search_c, case=False)).any(axis=1)]
-                if not res_c.empty:
-                    st.dataframe(res_c, use_container_width=True)
+        # 查询与提醒逻辑
+        df_clients = pd.read_csv(CUSTOMER_FILE)
+        
+        # 计算到期时间函数
+        def check_status(row):
+            if row['Payment'] == 'Cash': return "Lunas (Cash)"
+            try:
+                start_date = datetime.strptime(str(row['Tanggal']), '%Y-%m-%d')
+                tenor_months = int(row['Tenor'])
+                end_date = start_date + relativedelta(months=tenor_months)
+                today = datetime.now()
+                
+                if today > end_date:
+                    return "🔴 Lewat Jatuh Tempo (Overdue)"
+                elif today + relativedelta(months=1) >= end_date:
+                    return "🟡 Akan Jatuh Tempo (Segera)"
                 else:
-                    st.warning("Data konsumen tidak ditemukan.")
+                    return "🟢 Dalam Cicilan (On Going)"
+            except:
+                return "Data Error"
+
+        # 添加状态列
+        if not df_clients.empty:
+            df_clients['Status Pembayaran'] = df_clients.apply(check_status, axis=1)
+            
+            search_c = st.text_input("Cari Nama/Plat/Status:")
+            if search_c:
+                res = df_clients[df_clients.astype(str).apply(lambda x: x.str.contains(search_c, case=False)).any(axis=1)]
+                st.dataframe(res, use_container_width=True)
             else:
-                st.write("10 Data Terakhir:", df_clients.tail(10))
+                st.subheader("Ringkasan Pembayaran Konsumen")
+                st.dataframe(df_clients, use_container_width=True)
