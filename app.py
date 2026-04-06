@@ -3,6 +3,8 @@ import pandas as pd
 import os
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
+import qrcode  # 新增：二维码库
+from io import BytesIO
 
 # 1. Konfigurasi Halaman
 st.set_page_config(page_title="Sistem Manajemen Motor", layout="wide")
@@ -20,20 +22,51 @@ st.title("🏍️ Sistem Manajemen Sparepart & Penjualan")
 
 tab1, tab2 = st.tabs(["🔍 Cari Sparepart & Harga", "📝 Data Konsumen & Notifikasi"])
 
+# --- 新增：二维码生成函数 ---
+def generate_qr(data):
+    qr = qrcode.make(data)
+    buf = BytesIO()
+    qr.save(buf, format="PNG")
+    return buf.getvalue()
+
 # --- BAGIAN 1: CARI SPAREPART ---
 with tab1:
     st.header("Pencarian Sparepart")
     if os.path.exists(PARTS_FILE):
         try:
             df_parts = pd.read_excel(PARTS_FILE)
+            # --- 修复：强制转换所有数据为字符串，解决 pyarrow 报错 ---
+            df_parts = df_parts.astype(str) 
+            
             search_part = st.text_input("Masukkan Nama atau Kode Sparepart:", key="part_search")
             if search_part:
-                mask = df_parts.astype(str).apply(lambda x: x.str.contains(search_part, case=False)).any(axis=1)
-                st.dataframe(df_parts[mask], use_container_width=True)
+                mask = df_parts.apply(lambda x: x.str.contains(search_part, case=False)).any(axis=1)
+                found_df = df_parts[mask]
+                st.dataframe(found_df, use_container_width=True)
+                
+                # --- 新增：显示二维码功能 ---
+                if not found_df.empty:
+                    st.divider()
+                    st.subheader("🛠️ Quick QR Code")
+                    # 取搜索到的第一个零件编号生成二维码
+                    first_part_code = str(found_df.iloc[0, 0]) 
+                    qr_img = generate_qr(first_part_code)
+                    
+                    col_qr1, col_qr2 = st.columns([1, 3])
+                    with col_qr1:
+                        st.image(qr_img, width=180)
+                    with col_qr2:
+                        st.write(f"**Kode Part:** {first_part_code}")
+                        st.download_button(
+                            label="📥 下载二维码用于打印",
+                            data=qr_img,
+                            file_name=f"QR_{first_part_code}.png",
+                            mime="image/png"
+                        )
             else:
-                st.write("Data Sparepart:", df_parts.head(10))
-        except:
-            st.error("Gagal membaca data.xlsx")
+                st.write("Data Sparepart (Top 10):", df_parts.head(10))
+        except Exception as e:
+            st.error(f"Gagal membaca data.xlsx: {e}")
 
 # --- BAGIAN 2: DATA KONSUMEN & REMINDER ---
 with tab2:
@@ -57,9 +90,7 @@ with tab2:
                 hp = st.text_input("No. HP")
 
             st.markdown("---")
-            # --- 关键：这里的代码控制选项显示 ---
             pay = st.selectbox("Metode Pembayaran", ["Cash", "Kredit"])
-            
             leasing = "N/A"
             tenor = "0"
             
@@ -81,6 +112,9 @@ with tab2:
     else:
         if os.path.exists(CUSTOMER_FILE):
             df_clients = pd.read_csv(CUSTOMER_FILE)
+            # --- 修复：同样强制转换为字符串防错 ---
+            df_clients = df_clients.astype(str)
+            
             def check_status(row):
                 if row['Payment'] == 'Cash': return "🟢 Lunas (Cash)"
                 try:
@@ -92,6 +126,7 @@ with tab2:
                     elif today + relativedelta(months=1) >= end_date: return "🟡 Segera (Bulan ini)"
                     else: return "🔵 On Going"
                 except: return "Data Error"
+            
             if not df_clients.empty:
                 df_clients['Status'] = df_clients.apply(check_status, axis=1)
                 st.dataframe(df_clients, use_container_width=True)
